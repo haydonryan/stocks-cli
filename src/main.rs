@@ -356,6 +356,22 @@ fn print_stock_table(stocks: &[StockData]) {
     }
 }
 
+fn print_empty_watchlist_json(error_message: &str) {
+    let output = serde_json::json!({
+        "stocks": Vec::<StockData>::new(),
+        "errors": vec![error_message],
+    });
+    println!("{}", serde_json::to_string_pretty(&output).unwrap());
+}
+
+fn print_no_tickers_json() {
+    let output = serde_json::json!({
+        "stocks": Vec::<StockData>::new(),
+        "errors": vec![String::from("No valid tickers provided")],
+    });
+    println!("{}", serde_json::to_string_pretty(&output).unwrap());
+}
+
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
@@ -378,6 +394,10 @@ async fn main() {
                     std::process::exit(1);
                 });
                 if watchlist.symbols.is_empty() {
+                    if args.json {
+                        print_empty_watchlist_json("Watchlist is empty.");
+                        std::process::exit(1);
+                    }
                     println!("Watchlist is empty.");
                     return;
                 }
@@ -436,6 +456,10 @@ async fn main() {
                 .collect();
 
             if tickers.is_empty() {
+                if args.json {
+                    print_no_tickers_json();
+                    std::process::exit(1);
+                }
                 eprintln!("Error: No valid tickers provided");
                 std::process::exit(1);
             }
