@@ -511,3 +511,93 @@ async fn main() {
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env::var_os;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct TempHome {
+        prev_home: Option<std::ffi::OsString>,
+        home_path: PathBuf,
+        _guard: MutexGuard<'static, ()>,
+    }
+
+    impl TempHome {
+        fn new() -> Self {
+            let guard = TEST_LOCK
+                .get_or_init(|| Mutex::new(()))
+                .lock()
+                .expect("lock tests");
+
+            let prev_home = var_os("HOME");
+            let home_path = {
+                let mut path = std::env::current_dir().expect("current dir");
+                let nanos = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .expect("time ok")
+                    .as_nanos();
+                path.push(format!("stocks-cli-test-{nanos}"));
+                fs::create_dir_all(&path).expect("temp home dir");
+                path
+            };
+            std::env::set_var("HOME", &home_path);
+
+            Self {
+                prev_home,
+                home_path,
+                _guard: guard,
+            }
+        }
+    }
+
+    impl Drop for TempHome {
+        fn drop(&mut self) {
+            match &self.prev_home {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+            let _ = fs::remove_dir_all(&self.home_path);
+        }
+    }
+
+    #[test]
+    fn normalize_ticker_is_uppercase_and_trimmed() {
+        assert_eq!("AVGO", normalize_ticker(" avgo "));
+        assert_eq!("MSFT", normalize_ticker("mSfT"));
+    }
+
+    #[test]
+    fn load_watchlist_with_missing_file_is_empty() {
+        let _home = TempHome::new();
+        let watchlist = load_watchlist().expect("load watchlist");
+        assert!(watchlist.symbols.is_empty());
+    }
+
+    #[test]
+    fn add_watchlist_is_case_insensitive_and_deduplicates() {
+        let _home = TempHome::new();
+
+        assert!(add_to_watchlist("avgo").expect("add avgo"));
+        assert!(!add_to_watchlist("AVGO").expect("add AVGO"));
+
+        let watchlist = load_watchlist().expect("load watchlist");
+        assert_eq!(vec!["AVGO"], watchlist.symbols);
+    }
+
+    #[test]
+    fn del_watchlist_removes_symbol_case_insensitively() {
+        let _home = TempHome::new();
+
+        assert!(add_to_watchlist("avgo").expect("add avgo"));
+        assert!(remove_from_watchlist("AvGo").expect("remove avgo"));
+
+        let watchlist = load_watchlist().expect("load watchlist");
+        assert!(watchlist.symbols.is_empty());
+        assert!(!remove_from_watchlist("avgo").expect("remove missing avgo"));
+    }
+}
